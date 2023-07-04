@@ -156,3 +156,7 @@ class RecipeObject (object):
         calculated_hash = hashlib.sha256(scratch_recipe_json).hexdigest()
         # update the recipe
         self.__recipe_data["hash"] = calculated_hash
+
+    def __str__(self) -> str:
+        result = "Paprika Recipe <{}> ({})".format(self.__recipe_data["uid"], self.__recipe_data["name"])
+        return result
