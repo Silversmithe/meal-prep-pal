@@ -85,8 +85,34 @@ class Database (object):
 
         return Database.Error.ERR_SUCCESS
     
+    def pull_recipe_list(self):
+        """
+        @retval None: unable to pull list
+        @retval list: list of uids of all of the recipes
+        """
+        uid_list = None
+
+        try:
+            # get a cursor
+            status = self.__open()
+            if status != Database.Error.ERR_SUCCESS:
+                return None
+            
+            result = self.cursor.execute("SELECT (uid) FROM RECIPE_TABLE")
+            uid_list = result.fetchall()  
+
+        finally: 
+            status = self.__close()
+            if status != Database.Error.ERR_SUCCESS:
+                return None
+        
+        return uid_list
+    
     def write_recipe(self, paprika_recipe: RecipeObject) -> int:
-        result = Database.Error.ERR_GENERIC
+        """
+        @retval Database.Error.ERR_SUCCESS: write was successful
+        """
+        status = Database.Error.ERR_GENERIC
 
         # Open and close the DB connection per read/write
         # FAIL if either open or close fails
@@ -128,66 +154,76 @@ class Database (object):
             recipe_dict["image_url"],
             recipe_dict["prep_time"],
             recipe_dict["servings"],
-            recipe_dict["nutritional_info"]
+            recipe_dict["nutritional_info"],
+            # METADATA
+            int(paprika_recipe.metadata_has_nutritional_info),
+            int(paprika_recipe.metadata_is_modified)
         )
 
-        # check if the recipe exists
-        result = self.cursor.execute("SELECT * FROM RECIPE_TABLE WHERE uid='{}'".format(recipe_uid))
-        row = result.fetchone()
+        ## Performe the database operation
+        try:
+            # check if the recipe exists
+            result = self.cursor.execute("SELECT * FROM RECIPE_TABLE WHERE uid='{}'".format(recipe_uid))
+            row = result.fetchone()
 
-        if row is not None:
-            recipe_in_database = True
-        else:
-            recipe_in_database = False
-
-        if recipe_in_database is True:
-            # if it exists, we alter
-            self.cursor.execute("""
-                UPDATE RECIPE_TABLE 
-                    SET rating = ?,
-                        photo_hash = ?,
-                        on_favorites = ?,
-                        photo = ?,
-                        scale = ?,
-                        ingredients = ?,
-                        is_pinned = ?,
-                        source = ?,
-                        total_time = ?,
-                        hash = ?,
-                        description = ?,
-                        source_url = ?,
-                        difficulty = ?,
-                        on_grocery_list = ?,
-                        in_trash = ?,
-                        directions = ?,
-                        categories = ?,
-                        photo_url = ?,
-                        cook_time = ?,
-                        name = ?,
-                        created = ?,
-                        notes = ?,
-                        photo_large = ?,
-                        image_url = ?,
-                        prep_time = ?,
-                        servings = ?,
-                        nutritional_info = ?
-                        WHERE uid = '{recipe_uid}'
-            """, data)
-        else:
-            # if it doenst exist, lets add
-            self.cursor.execute(f"""
-                INSERT INTO RECIPE_TABLE VALUES (
-                    '{recipe_uid}',?,?,?,?,?,?,?,?,?,
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
-                )
-            """, data)
-
-        # commit the transaction to solidify the write
-        self.connection.commit()
-
-        status = self.__close()
-        if status != Database.Error.ERR_SUCCESS:
-            return status
+            if row is not None:
+                recipe_in_database = True
+            else:
+                recipe_in_database = False
+            
+            # update or create recipe
+            if recipe_in_database is True:
+                # if it exists, we alter
+                self.cursor.execute(f"""
+                    UPDATE RECIPE_TABLE 
+                        SET rating = ?,
+                            photo_hash = ?,
+                            on_favorites = ?,
+                            photo = ?,
+                            scale = ?,
+                            ingredients = ?,
+                            is_pinned = ?,
+                            source = ?,
+                            total_time = ?,
+                            hash = ?,
+                            description = ?,
+                            source_url = ?,
+                            difficulty = ?,
+                            on_grocery_list = ?,
+                            in_trash = ?,
+                            directions = ?,
+                            categories = ?,
+                            photo_url = ?,
+                            cook_time = ?,
+                            name = ?,
+                            created = ?,
+                            notes = ?,
+                            photo_large = ?,
+                            image_url = ?,
+                            prep_time = ?,
+                            servings = ?,
+                            nutritional_info = ?,
+                            b_has_nutritional_info = ?,
+                            b_recipe_modified = ?
+                            WHERE uid = '{recipe_uid}'
+                """, data)
+            else:
+                # if it doenst exist, lets add
+                self.cursor.execute(f"""
+                    INSERT INTO RECIPE_TABLE VALUES (
+                        '{recipe_uid}',?,?,?,?,?,?,?,?,?,?,?,
+                        ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                    )""", data)
+            
+            # commit the transaction to solidify the write
+            self.connection.commit()
+        except Exception as e:
+            mpp_utils.dbgPrint(e)
+            status = Database.Error.ERR_OPERATION_FAILED
+        finally:
+            status_close = self.__close()
+            if status != Database.Error.ERR_SUCCESS or status_close != Database.Error.ERR_SUCCESS:
+                return Database.Error.ERR_OPERATION_FAILED
 
         result = Database.Error.ERR_SUCCESS
         return result
@@ -256,10 +292,10 @@ class Database (object):
 ## IN-FILE UNIT TESTING ##
 ##########################
 ## Run Tests if the config is 
-if mpp_utils.APP__CONFIG__UNIT_TEST == True:
+if mpp_utils.APP__CONFIG__DATABASE__UNIT_TEST == True:
     # fake/test recipe
-    uid = "647A8FCA-615C-4849-A692-94407600AB7A"
-    new_uid = "fancy-uid"
+    global_test_uid = "647A8FCA-615C-4849-A692-94407600AB7A"
+    global_new_uid = "fancy-uid"
     """
     Test normal usage
     """
@@ -275,7 +311,7 @@ if mpp_utils.APP__CONFIG__UNIT_TEST == True:
         database.write_recipe(paprika_recipe=new_recipe)
 
         # read recipe
-        recipe = database.read_recipe(uid=new_uid)
+        recipe = database.read_recipe(uid=global_new_uid)
 
         print("Read Paprika Recipe")
         print(recipe)
@@ -290,8 +326,71 @@ if mpp_utils.APP__CONFIG__UNIT_TEST == True:
 
         status = status and (database.connection_is_open == False)
         return status
+    
+    """
+    Ensure that the storage is proper
+    """
+    def test1() -> bool:
+        status = True
+        database = Database()
 
-    TestList = [test0]
+        # create a fake recipe
+        paprika_recipe = RecipeObject()
+        paprika_recipe.init(
+            uid=global_test_uid,
+            name="Fake Recipe",
+            directions="Gather up all the bullshit and throw it out",
+            servings="2 servings",
+            rating=4,
+            difficulty="Easy",
+            ingredients="1 cup bullshit\n1 cup help me!",
+            notes="Generated with Meal Prep Pal",
+            created="2018-03-26 09:00:02",
+            image_url="IMAGE-URL",
+            on_favorites=False,
+            cook_time="COOK-TIME",
+            prep_time="10 minutes",
+            source="www.fakeotherwebsite.com",
+            source_url="SOURCE-URL",
+            photo_hash="PHOTO-HASH",
+            photo="PHOTO",
+            nutritional_info="100 BILLION Calories",
+            scale="1",
+            is_pinned=False,
+            categories=[],
+            hash="162e5ad0134e9398b98057aea951304780d0396582238320c28b34a7c35f841e",
+            description="DESCRIPTION",
+            total_time="60 seconds",
+            on_grocery_list=False,
+            in_trash=False,
+            photo_url="PHOTO-URL",
+            photo_large="PHOTO-LARGE"
+        )
+
+        # Print out the recipe
+        print("Recipe BEFORE storage")
+        before_recipe = paprika_recipe.as_dict()
+        for key in before_recipe.keys():
+            print("{}: {}".format(key, before_recipe[key]))
+
+        # store recipe in database
+        s1 = database.write_recipe(paprika_recipe=paprika_recipe)
+
+        if s1 is not Database.Error.ERR_SUCCESS:
+            return Database.Error.ERR_GENERIC
+
+        # load recipe from database
+        read_recipe = database.read_recipe(uid=global_test_uid)
+        
+        print()
+        print("Recipe AFTER storage")
+        after_recipe = read_recipe.as_dict()
+        for key in after_recipe.keys():
+            print("{}: {}".format(key, after_recipe[key]))
+
+        return status
+
+    TestList = [test0, test1]
     SuccessCount = 0
 
     for test in TestList:

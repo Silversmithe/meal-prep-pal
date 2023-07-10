@@ -17,6 +17,7 @@ import hashlib
 # App packages
 import mpp_utils
 from data.recipe import RecipeObject
+from database import Database
 
 
 """
@@ -121,6 +122,7 @@ class RecipeAgent(threading.Thread):
         self.authentication = auth
         self.command = cmd
         self.status = RecipeAgent.Error.ERR_GENERIC
+        self.database = Database()
 
         if RecipeAgent.PaprikaObj is None:
             RecipeAgent.PaprikaObj = Paprika3()
@@ -138,17 +140,19 @@ class RecipeAgent(threading.Thread):
         @retval Dict: a dictionary object of the recipe
         """
         result = None
+
+        if debug is True:
+            mpp_utils.dbgPrint("Request Sent: {}".format(request_url))
+
         try:
             if command == RecipeAgent.Command.CMD_PULL_RECIPES:
                 result = requests.get(request_url, auth=self.authentication.auth_info)
-                mpp_utils.dbgPrint("Request Sent: {}".format(request_url))
             elif command == RecipeAgent.Command.CMD_PUSH_RECIPES:
                 # If pushing data, there needs to be data to push
                 if data is None:
                     return None
                 # send the request
                 result = requests.post(request_url, auth=self.authentication.auth_info, files={"data": data})
-                mpp_utils.dbgPrint("Request Sent: {}".format(request_url))
             else:
                 pass
 
@@ -204,7 +208,7 @@ class RecipeAgent(threading.Thread):
         packaged_data = gzip.compress(paprika_recipe.as_json().encode(encoding="utf-8"))
 
         request_url = RecipeAgent.PaprikaObj.add(RecipeAgent.PaprikaObj.API__SYNC_RECIPE, recipe_uid)
-        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PUSH_RECIPES, request_url=request_url, data=packaged_data, debug=True)
+        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PUSH_RECIPES, request_url=request_url, data=packaged_data, debug=False)
 
         return result
     
@@ -217,7 +221,7 @@ class RecipeAgent(threading.Thread):
         result = None
 
         request_url = RecipeAgent.PaprikaObj.API__SYNC_ALL_RECIPIES
-        result = self.__make_http_request(command=self.command, request_url=request_url)
+        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PULL_RECIPES, request_url=request_url)
 
         if result is None:
             return RecipeAgent.Error.ERR_REQUEST_FAIL
@@ -286,11 +290,72 @@ class RecipeAgent(threading.Thread):
         return RecipeAgent.Error.ERR_SUCCESS
         
     ## CORE COMMAND FUNCTIONS
-    def __api_pull_recipes(self, debug=False) -> int:
+    def __api_pull_recipes(self, loadbar=False, debug=False) -> int:
         """
         @retval RecipeAgent.Error.ERR_SUCCESS: recipes are pulled as expected
         @retval RecipeAgent.Error.ERR_REQUEST_FAIL: Unable to pull recipes
         """
+        # stats
+        total_recipes = 0
+        current_recipe_count = 0
+        unable_to_store = 0
+        successfully_stored = 0
+
+        # pull all recipies to get the UIDs
+        req1_result = None
+        request_url = RecipeAgent.PaprikaObj.API__SYNC_ALL_RECIPIES
+        req1_result = self.__make_http_request(command=RecipeAgent.Command.CMD_PULL_RECIPES, request_url=request_url)
+
+        if req1_result is None:
+            return RecipeAgent.Error.ERR_REQUEST_FAIL
+        
+        recipe_list = req1_result['result']
+        total_recipes = len(recipe_list)
+        mpp_utils.dbgPrint("Recipe Count: {}".format(total_recipes))
+
+        # ITERATE THROUGH EACH RECIPE
+        for recipe in recipe_list:
+            # gather stats
+            current_recipe_count += 1
+
+            # creating a loading bar
+            if loadbar is True:
+                percent = int((current_recipe_count/total_recipes)*100.0)
+                residual = 100 - percent
+                print("[{}{}] ({}%)".format('='*percent,' '*residual, percent), end='\r')
+
+            # recipe is an object with hash & uid
+            uid = recipe['uid']
+            reqx_result = self.__api_pull_recipe(recipe_uid=uid)
+
+            # only do things if the uid result is not none
+            if reqx_result is None:
+                continue
+
+            # load into paprika object
+            jsonobject = reqx_result['result']
+            paprika_recipe = RecipeObject()
+            paprika_recipe.init_from_jsonobj(jsonobj=jsonobject)
+
+            if debug is True:
+                mpp_utils.dbgPrint("Pull UID: {}".format(recipe))
+                mpp_utils.dbgPrint(paprika_recipe)
+
+            # STORE INTO DATABASE
+            if self.database.write_recipe(paprika_recipe=paprika_recipe) != Database.Error.ERR_SUCCESS:
+                if debug is True:
+                    mpp_utils.dbgPrint("Unable to store into database")
+                unable_to_store += 1
+            else:
+                successfully_stored += 1
+                
+        if unable_to_store > successfully_stored:
+            if debug is True:
+                mpp_utils.dbgPrint("Failed when storing a majority of the recipes")
+            return RecipeAgent.Error.ERR_REQUEST_FAIL
+
+        # iterate through each UID and pull each recipe and all of its contents
+        # store it in the database
         return RecipeAgent.Error.ERR_SUCCESS
     
     def __api_push_recipes(self, debug=False) -> int:
@@ -300,10 +365,35 @@ class RecipeAgent(threading.Thread):
         """
         result = None
 
-        if result is None:
-            print("Result FAILED")
+        uid_list = self.database.pull_recipe_list()
+
+        # get all of the recipes from the database
+        if uid_list is None:
+            mpp_utils.dbgPrint("Unable to pull recipes")
             return RecipeAgent.Error.ERR_REQUEST_FAIL
 
+        # iterate through each recipe in the database
+        for element in uid_list:
+            # uid is first and only element in tuple
+            # based on behavior of "pull_recipe_list"
+            uid = element[0]
+            mpp_utils.dbgPrint('UID: {}'.format(uid))
+            # construct the recipe object
+            recipe = self.database.read_recipe(uid=uid)
+
+            # skip if recipe is found
+            if recipe is None:
+                mpp_utils.dbgPrint("no recipe found")
+                continue
+
+            # skip if recipe has not been modified
+            if not recipe.metadata_is_modified:
+                mpp_utils.dbgPrint("recipe not modified")
+                continue
+
+            # push the recipe back to the paprika server
+            self.__api_push_recipe(recipe_uid=uid, paprika_recipe=recipe)
+                
         return RecipeAgent.Error.ERR_SUCCESS
 
     ## THREAD RUN DEFINITION
@@ -313,11 +403,10 @@ class RecipeAgent(threading.Thread):
 
         status_code = RecipeAgent.Error.ERR_SUCCESS
         if self.command == RecipeAgent.Command.CMD_PULL_RECIPES:
-            status_code = self.__api_pull_recipes()
+            status_code = self.__api_pull_recipes(loadbar=False, debug=True)
 
         elif self.command == RecipeAgent.Command.CMD_PUSH_RECIPES:
             status_code = self.__api_push_recipes()
-            pass # TODO
 
         # error handling
         if status_code is not RecipeAgent.Error.ERR_SUCCESS:
@@ -331,23 +420,19 @@ class RecipeAgent(threading.Thread):
 ## IN-FILE UNIT TESTING ##
 ##########################
 ## Run Tests if the config is 
-if mpp_utils.APP__CONFIG__UNIT_TEST == True:
+if mpp_utils.APP__CONFIG__RECIPE_AGENT__UNIT_TEST == True:
     USER = input("Username: ")
     PASSWORD = input("Password: ")
 
     """
-    Test Successfull sync of recipes
+    Test Successfull single pull/push
     """
     def test0() -> bool:
         recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES, auth=AuthenticationObject(uname=USER, pword=PASSWORD))
-        recipe_agent.start()
-        recipe_agent.join()
+        recipe_agent.test_pull()
+        recipe_agent.test_push()
+        return True
 
-        if recipe_agent.status is RecipeAgent.Error.ERR_SUCCESS:
-            return True
-        else:
-            return False
-        
     """
     Test invalid credentials
     """
@@ -365,19 +450,32 @@ if mpp_utils.APP__CONFIG__UNIT_TEST == True:
             return False
 
     """
-    Test Successfull update of a recipe
+    Test Successfull command to pull & store all recipes
     """
     def test2() -> bool:
+        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES, auth=AuthenticationObject(uname=USER, pword=PASSWORD))
+        recipe_agent.start()
+        recipe_agent.join()
+
+        if recipe_agent.status == RecipeAgent.Error.ERR_SUCCESS:
+            return True
+        else:
+            return False
+        
+    """
+    Test Successfull command to load all recipes from the database & push
+    """
+    def test3() -> bool:
         recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PUSH_RECIPES, auth=AuthenticationObject(uname=USER, pword=PASSWORD))
         recipe_agent.start()
         recipe_agent.join()
 
-        if recipe_agent.status is RecipeAgent.Error.ERR_SUCCESS:
+        if recipe_agent.status == RecipeAgent.Error.ERR_SUCCESS:
             return True
         else:
             return False
 
-    TestList = [test0, test1, test2]
+    TestList = [test3]
     SuccessCount = 0
 
     for test in TestList:

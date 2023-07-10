@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS RECIPE_TABLE (
     image_url       TEXT    DEFAULT "",
     prep_time       TEXT    DEFAULT "",
     servings        TEXT    DEFAULT "",
-    nutritional_info TEXT    DEFAULT ""
+    nutritional_info TEXT    DEFAULT "",
+    -- Metadata for database management
+    -- NOT a part of the recipe
+    b_has_nutritional_info  INT    DEFAULT 0, -- False
+    b_recipe_modified       INT    DEFAULT 0  -- False    
 );
 
 -- Create the meals table

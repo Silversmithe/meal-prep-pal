@@ -57,6 +57,8 @@ class RecipeObject (object):
             "servings": str(),
             "nutritional_info": str()
         }
+        self.metadata_has_nutritional_info = False
+        self.metadata_is_modified = False
 
     def init(self,
         uid: str, rating: int, photo_hash: str, on_favorites: bool, photo: str, scale: str,
@@ -93,6 +95,48 @@ class RecipeObject (object):
         self.__recipe_data['prep_time'] = prep_time
         self.__recipe_data['servings'] = servings
         self.__recipe_data['nutritional_info'] = nutritional_info
+        # METADATA
+        self.metadata_is_modified = False
+        # assuming that if nutritional info is a nonzero that 
+        # there is nutritional info and it is valid
+        if len(self.__recipe_data['nutritional_info']) > 0:
+            self.metadata_has_nutritional_info = True
+
+    def init_from_jsonobj(self, jsonobj: dict):
+        self.__recipe_data['uid'] = jsonobj['uid']
+        self.__recipe_data['rating'] = jsonobj['rating']
+        self.__recipe_data['photo_hash'] = jsonobj['photo_hash']
+        self.__recipe_data['on_favorites'] = jsonobj['on_favorites']
+        self.__recipe_data['photo'] = jsonobj['photo']
+        self.__recipe_data['scale'] = jsonobj['scale']
+        self.__recipe_data['ingredients'] = jsonobj['ingredients']
+        self.__recipe_data['is_pinned'] = jsonobj['is_pinned']
+        self.__recipe_data['source'] = jsonobj['source']
+        self.__recipe_data['total_time'] = jsonobj['total_time']
+        self.__recipe_data['hash'] = jsonobj['hash']
+        self.__recipe_data['description'] = jsonobj['description']
+        self.__recipe_data['source_url'] = jsonobj['source_url']
+        self.__recipe_data['difficulty'] = jsonobj['difficulty']
+        self.__recipe_data['on_grocery_list'] = jsonobj['on_grocery_list']
+        self.__recipe_data['in_trash'] = jsonobj['in_trash']
+        self.__recipe_data['directions'] = jsonobj['directions']
+        self.__recipe_data['categories'] = jsonobj['categories']
+        self.__recipe_data['photo_url'] = jsonobj['photo_url']
+        self.__recipe_data['cook_time'] = jsonobj['cook_time']
+        self.__recipe_data['name'] = jsonobj['name']
+        self.__recipe_data['created'] = jsonobj['created']
+        self.__recipe_data['notes'] = jsonobj['notes']
+        self.__recipe_data['photo_large'] = jsonobj['photo_large']
+        self.__recipe_data['image_url'] = jsonobj['image_url']
+        self.__recipe_data['prep_time'] = jsonobj['prep_time']
+        self.__recipe_data['servings'] = jsonobj['servings']
+        self.__recipe_data['nutritional_info'] = jsonobj['nutritional_info']
+        # METADATA
+        self.metadata_is_modified = False
+        # assuming that if nutritional info is a nonzero that 
+        # there is nutritional info and it is valid
+        if len(self.__recipe_data['nutritional_info']) > 0:
+            self.metadata_has_nutritional_info = True
 
     def load(self, key):
         """
@@ -119,6 +163,17 @@ class RecipeObject (object):
         """
         if key in self.__recipe_data:
             if type(value) == type(self.__recipe_data[key]):
+                # update metadata
+                self.metadata_is_modified = True
+                # if modifying nutritional information
+                # mark if info exists or not based on string length
+                if key == "nutritional_info":
+                    if len(value) > 0:
+                        self.metadata_has_nutritional_info = True
+                    else:
+                        self.metadata_has_nutritional_info = False
+
+                # perform the actual operation
                 self.__recipe_data[key] = value
             else:
                 mpp_utils.dbgPrint("unable to store value, types dont match!")
