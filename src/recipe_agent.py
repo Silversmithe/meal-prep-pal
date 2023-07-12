@@ -1,5 +1,5 @@
 ##
-## This agent is a threat that manages storing and updating the 
+## This agent is a thread that manages storing and updating the 
 ## paprika recipies
 ##
 ## Reference: 
@@ -10,12 +10,11 @@
 from enum import Enum
 import requests
 import threading
-import json
 import gzip
-import hashlib
 
 # App packages
 import mpp_utils
+from app import AppSurface
 from data.recipe import RecipeObject
 from database import Database
 
@@ -111,14 +110,16 @@ class RecipeAgent(threading.Thread):
         ERR_GENERIC = 1,
         ERR_REQUEST_FAIL = 2,
         ERR_INVALID_PARAMS = 3,
+        ERR_INALID_SURFACE = 4
 
     # Commands to the recipe agent
     class Command(Enum):
         CMD_PULL_RECIPES = 0,
         CMD_PUSH_RECIPES = 1,
     
-    def __init__(self, auth, cmd) -> None:
+    def __init__(self, app_surface: AppSurface, auth: AuthenticationObject, cmd) -> None:
         super().__init__(group=None, target=None, name=None, args=(), kwargs={}, daemon=None)
+        self.app_surface = app_surface
         self.authentication = auth
         self.command = cmd
         self.status = RecipeAgent.Error.ERR_GENERIC
@@ -363,8 +364,6 @@ class RecipeAgent(threading.Thread):
         @retval RecipeAgent.Error.ERR_SUCCESS: recipes are pushed as expected
         @retval RecipeAgent.Error.ERR_REQUEST_FAIL: Unable to push recipes
         """
-        result = None
-
         uid_list = self.database.pull_recipe_list()
 
         # get all of the recipes from the database
@@ -401,9 +400,23 @@ class RecipeAgent(threading.Thread):
         mpp_utils.dbgPrint("Running Recipe Agent")
         mpp_utils.dbgPrint("Command: {}".format(self.command))
 
+        # check the surface
+        if (type(self.app_surface) is not AppSurface) or (self.app_surface is None):
+            self.status = RecipeAgent.Error.ERR_INVALID_SURFACE
+            # set surface
+            self.app_surface.surface_lock.acquire()
+            self.app_surface.b_recipe_agent_running = False
+            self.app_surface.surface_lock.release()
+            return
+        
+        # set surface
+        self.app_surface.surface_lock.acquire()
+        self.app_surface.b_recipe_agent_running = True
+        self.app_surface.surface_lock.release()
+
         status_code = RecipeAgent.Error.ERR_SUCCESS
         if self.command == RecipeAgent.Command.CMD_PULL_RECIPES:
-            status_code = self.__api_pull_recipes(loadbar=False, debug=True)
+            status_code = self.__api_pull_recipes(loadbar=False, debug=False)
 
         elif self.command == RecipeAgent.Command.CMD_PUSH_RECIPES:
             status_code = self.__api_push_recipes()
@@ -413,6 +426,11 @@ class RecipeAgent(threading.Thread):
             mpp_utils.dbgPrint("Unable to complete command.")
             mpp_utils.dbgPrint("Error: {}".format(status_code))
         
+        # set surface
+        self.app_surface.surface_lock.acquire()
+        self.app_surface.b_recipe_agent_running = False
+        self.app_surface.surface_lock.release()
+
         # set the thread status
         self.status = status_code
 
@@ -428,7 +446,9 @@ if mpp_utils.APP__CONFIG__RECIPE_AGENT__UNIT_TEST == True:
     Test Successfull single pull/push
     """
     def test0() -> bool:
-        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES, auth=AuthenticationObject(uname=USER, pword=PASSWORD))
+        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES, 
+                                   app_surface=None,
+                                   auth=AuthenticationObject(uname=USER, pword=PASSWORD))
         recipe_agent.test_pull()
         recipe_agent.test_push()
         return True
@@ -439,7 +459,9 @@ if mpp_utils.APP__CONFIG__RECIPE_AGENT__UNIT_TEST == True:
     def test1() -> bool:
         BAD_USER="fakeuser"
         BAD_PASSWORD="fakepass"
-        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES, auth=AuthenticationObject(uname=BAD_USER, pword=BAD_PASSWORD))
+        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES,
+                                   app_surface=None,
+                                   auth=AuthenticationObject(uname=BAD_USER, pword=BAD_PASSWORD))
         recipe_agent.start()
         recipe_agent.join()
 
@@ -453,7 +475,9 @@ if mpp_utils.APP__CONFIG__RECIPE_AGENT__UNIT_TEST == True:
     Test Successfull command to pull & store all recipes
     """
     def test2() -> bool:
-        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES, auth=AuthenticationObject(uname=USER, pword=PASSWORD))
+        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PULL_RECIPES,
+                                   app_surface=None,
+                                   auth=AuthenticationObject(uname=USER, pword=PASSWORD))
         recipe_agent.start()
         recipe_agent.join()
 
@@ -466,7 +490,9 @@ if mpp_utils.APP__CONFIG__RECIPE_AGENT__UNIT_TEST == True:
     Test Successfull command to load all recipes from the database & push
     """
     def test3() -> bool:
-        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PUSH_RECIPES, auth=AuthenticationObject(uname=USER, pword=PASSWORD))
+        recipe_agent = RecipeAgent(cmd=RecipeAgent.Command.CMD_PUSH_RECIPES, 
+                                   app_surface=None,
+                                   auth=AuthenticationObject(uname=USER, pword=PASSWORD))
         recipe_agent.start()
         recipe_agent.join()
 

@@ -1,6 +1,7 @@
 
 import sqlite3
 import json
+import threading
 from enum import Enum
 
 # App packages
@@ -17,6 +18,7 @@ database interface.
 class Database (object):
 
     DATABASE_PATH = "./datastore/mpp.db"
+    DATABASE_WR_MUX = threading.Lock()
 
     class Error (Enum):
         ERR_SUCCESS = 0,
@@ -101,6 +103,9 @@ class Database (object):
             result = self.cursor.execute("SELECT (uid) FROM RECIPE_TABLE")
             uid_list = result.fetchall()  
 
+        except Exception as e:
+            mpp_utils.dbgPrint(e)
+            
         finally: 
             status = self.__close()
             if status != Database.Error.ERR_SUCCESS:
@@ -162,6 +167,9 @@ class Database (object):
 
         ## Performe the database operation
         try:
+            # acquire lock 
+            Database.DATABASE_WR_MUX.acquire()
+
             # check if the recipe exists
             result = self.cursor.execute("SELECT * FROM RECIPE_TABLE WHERE uid='{}'".format(recipe_uid))
             row = result.fetchone()
@@ -221,7 +229,13 @@ class Database (object):
             mpp_utils.dbgPrint(e)
             status = Database.Error.ERR_OPERATION_FAILED
         finally:
+            # close the database connection
             status_close = self.__close()
+
+            # release lock 
+            if Database.DATABASE_WR_MUX.locked():
+                Database.DATABASE_WR_MUX.release()
+
             if status != Database.Error.ERR_SUCCESS or status_close != Database.Error.ERR_SUCCESS:
                 return Database.Error.ERR_OPERATION_FAILED
 
