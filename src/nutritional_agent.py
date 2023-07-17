@@ -4,6 +4,7 @@
 ##
 
 # python builtin
+import re
 from enum import Enum
 import threading
 import json
@@ -81,14 +82,78 @@ class NutritionAgent(threading.Thread):
         """
         Calculate nutritional info
         """
+        # function status
+        status = NutritionAgent.Error.ERR_SUCCESS
+        # stat info
+        TotalIngredients = 0
+        IngredientsFound = 0
+        # nutritional info
+        nutritional_info = NutritionalInfo()
+
         if debug is True:
             mpp_utils.dbgPrint(paprika_recipe)
 
+        if paprika_recipe is None:
+            return NutritionAgent.Error.ERR_GENERIC
+        
+        ## extract ingredients
+        # load string
+        ingredients_as_str = paprika_recipe.load(key="ingredients")
+        # split by newline
+        ingredient_list = ingredients_as_str.split('\n')
+        TotalIngredients = len(ingredient_list)
+
         # iterate through the ingredients
+        for element in ingredient_list:
+            TotalIngredients += 1
+            b_ingredient_found = False
+
+            ##
+            ## Check if ingredient is a recipe
+            ##
+            ## For simplicy we can just have them look at the 
+            ## other recipe for simplicity and skip calculation
+            ## if thats cool.
+            ##
+            ## Ingredient is recipe: (can have spaces)
+            ## 2 tbsp [recipe:Persillade and something]
+            # use regex to determine if ingredient is a recipe
+            expression = '\[recipe\:(\w|\s|-)*\]'
+            recipe_match = re.search(expression, element)
+            if recipe_match is not None:
+                b_ingredient_found = True
+                IngredientsFound += 1
+                continue
+
+            # split by spaces
+            ingredient = element.split(" ")
+            ##
+            ## INGREDIENT LOOKUP ALGORITHM
+            ##
+            ## Basically need to find items in the databse with 
+            ## the highest 'similarity' to the ingredient.
+            ##
+            ## Then we pull the nutritional information, and 
+            ## ensure it is the correct portion.
+            pass
+
+            # check if the ingredient is found
+            if b_ingredient_found is True:
+                IngredientsFound += 1 
+
+        if debug is True:
+            mpp_utils.dbgPrint("Found {}/{} ingredients".format(IngredientsFound, TotalIngredients))
+
+        # store nutritional information in recipe
+        paprika_recipe.store(key="nutritional_info", value=str(nutritional_info))
 
         # sign recipe
+        # TODO: make sure this signature works! this is getting passed by value fyi
+        self.__sign_recipe(recipe=paprika_recipe)
 
         # re-store in recipe
+
+        return status
 
     def __recipe_update_pass(self, debug=False) -> int:
         """
@@ -116,6 +181,9 @@ class NutritionAgent(threading.Thread):
                     mpp_utils.dbgPrint("<uid: {}, force_update: {}, has nutritional info: {}".format(uid, self.force_update, paprika_recipe.metadata_has_nutritional_info))
                 # calculate the hash value
                 self.__calculate_nutritional_info(paprika_recipe=paprika_recipe, debug=debug)
+                # print(paprika_recipe.load(key="nutritional_info"))
+                ## Turn off DATABASE WRITE RIGHT NOW for DEVELEOPMENT REASONS
+                # self.database.write_recipe(paprika_recipe=paprika_recipe)
 
         return NutritionAgent.Error.ERR_SUCCESS
 
@@ -180,6 +248,17 @@ if mpp_utils.APP__CONFIG__NUTRITION_AGENT__UNIT_TEST == True:
         recipe_agent.join()
         nutrition_agent.join()
 
+        return True
+    
+    """
+    Test Regex
+    """
+    def test1() -> bool:
+        ingredient = '2 tbsp [recipe:Persillade and raddishes]'
+        ingredient2 = 'Lavender Coriander Chia Pudding|1 [recipe:3-Ingredient Chia Pudding]'
+        expression = '\[recipe\:(\w|\s|-)*\]'
+        recipe_match = re.search(expression, ingredient2)
+        print(recipe_match)
         return True
 
     TestList = [test0]
