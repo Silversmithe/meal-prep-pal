@@ -7,6 +7,7 @@ from enum import Enum
 # App packages
 import mpp_utils
 from data.recipe import RecipeObject
+from data.surface import AppSurface
 
 
 """

@@ -14,8 +14,8 @@ import gzip
 
 # App packages
 import mpp_utils
-from app import AppSurface
 from data.recipe import RecipeObject
+from data.surface import AppSurface
 from database import Database
 
 
@@ -110,20 +110,23 @@ class RecipeAgent(threading.Thread):
         ERR_GENERIC = 1,
         ERR_REQUEST_FAIL = 2,
         ERR_INVALID_PARAMS = 3,
-        ERR_INALID_SURFACE = 4
+        ERR_INALID_SURFACE = 4,
+        ERR_APP_SHUTDOWN = 5
 
     # Commands to the recipe agent
     class Command(Enum):
         CMD_PULL_RECIPES = 0,
         CMD_PUSH_RECIPES = 1,
     
-    def __init__(self, app_surface: AppSurface, auth: AuthenticationObject, cmd) -> None:
+    def __init__(self, app_surface: AppSurface, auth: AuthenticationObject, cmd, debug=False) -> None:
         super().__init__(group=None, target=None, name=None, args=(), kwargs={}, daemon=None)
         self.app_surface = app_surface
         self.authentication = auth
         self.command = cmd
         self.status = RecipeAgent.Error.ERR_GENERIC
         self.database = Database()
+        self.debug = debug
+        self.show_progress_status = False
 
         if RecipeAgent.PaprikaObj is None:
             RecipeAgent.PaprikaObj = Paprika3()
@@ -142,8 +145,7 @@ class RecipeAgent(threading.Thread):
         """
         result = None
 
-        if debug is True:
-            mpp_utils.dbgPrint("Request Sent: {}".format(request_url))
+        mpp_utils.dbgPrint("Request Sent: {}".format(request_url))
 
         try:
             if command == RecipeAgent.Command.CMD_PULL_RECIPES:
@@ -170,10 +172,9 @@ class RecipeAgent(threading.Thread):
 
         
         # information on debug
-        if debug is True:
-            mpp_utils.dbgPrint("Request Response")
-            mpp_utils.dbgPrint("Status({}) - {}".format(result.status_code, result.reason))
-            mpp_utils.dbgPrint("Reponse Content: {}".format(result.json()))
+        mpp_utils.dbgPrint("Request Response")
+        mpp_utils.dbgPrint("Status({}) - {}".format(result.status_code, result.reason))
+        mpp_utils.dbgPrint("Reponse Content: {}".format(result.json()))
         
         return result.json()
 
@@ -188,7 +189,7 @@ class RecipeAgent(threading.Thread):
         result = None
 
         request_url = RecipeAgent.PaprikaObj.add(RecipeAgent.PaprikaObj.API__SYNC_RECIPE, recipe_uid)
-        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PULL_RECIPES, request_url=request_url, debug=False)
+        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PULL_RECIPES, request_url=request_url, debug=self.debug)
         
         return result
     
@@ -209,12 +210,12 @@ class RecipeAgent(threading.Thread):
         packaged_data = gzip.compress(paprika_recipe.as_json().encode(encoding="utf-8"))
 
         request_url = RecipeAgent.PaprikaObj.add(RecipeAgent.PaprikaObj.API__SYNC_RECIPE, recipe_uid)
-        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PUSH_RECIPES, request_url=request_url, data=packaged_data, debug=False)
+        result = self.__make_http_request(command=RecipeAgent.Command.CMD_PUSH_RECIPES, request_url=request_url, data=packaged_data, debug=self.debug)
 
         return result
     
     ## DIAGNOSTIC FUNCTION
-    def test_pull(self):
+    def test_pull(self, debug=False):
         """
         @retval RecipeAgent.Error.ERR_REQUEST_FAIL: test failed
         @retval RecipeAgent.Error.ERR_REQUEST_FAIL: test succeeded
@@ -225,17 +226,19 @@ class RecipeAgent(threading.Thread):
         result = self.__make_http_request(command=RecipeAgent.Command.CMD_PULL_RECIPES, request_url=request_url)
 
         if result is None:
+            mpp_utils.dbgPrint("diagnostic error: Unable to pull information from paprika")
             return RecipeAgent.Error.ERR_REQUEST_FAIL
         
         # Iterate through each recipe and store into the local datastore
         uid_list = result['result']
+
         mpp_utils.dbgPrint("UID Count: {}".format(len(uid_list)))
 
         for uid in uid_list:
             mpp_utils.dbgPrint("UID: {}".format(uid))
 
         if result is None:
-            print("Result FAILED")
+            mpp_utils.dbgPrint("diagnostic error: Unable to pull information from paprika")
             return RecipeAgent.Error.ERR_REQUEST_FAIL
         
         return RecipeAgent.Error.ERR_SUCCESS
@@ -291,7 +294,7 @@ class RecipeAgent(threading.Thread):
         return RecipeAgent.Error.ERR_SUCCESS
         
     ## CORE COMMAND FUNCTIONS
-    def __api_pull_recipes(self, loadbar=False, debug=False) -> int:
+    def __api_pull_recipes(self, debug=False) -> int:
         """
         @retval RecipeAgent.Error.ERR_SUCCESS: recipes are pulled as expected
         @retval RecipeAgent.Error.ERR_REQUEST_FAIL: Unable to pull recipes
@@ -312,6 +315,7 @@ class RecipeAgent(threading.Thread):
         
         recipe_list = req1_result['result']
         total_recipes = len(recipe_list)
+
         mpp_utils.dbgPrint("Recipe Count: {}".format(total_recipes))
 
         # ITERATE THROUGH EACH RECIPE
@@ -319,8 +323,12 @@ class RecipeAgent(threading.Thread):
             # gather stats
             current_recipe_count += 1
 
+            # check for application close
+            if self.app_surface.b_app_running == False:
+                return RecipeAgent.Error.ERR_APP_SHUTDOWN
+
             # creating a loading bar
-            if loadbar is True:
+            if self.show_progress_status is True:
                 percent = int((current_recipe_count/total_recipes)*100.0)
                 residual = 100 - percent
                 print("[{}{}] ({}%)".format('='*percent,' '*residual, percent), end='\r')
@@ -338,21 +346,18 @@ class RecipeAgent(threading.Thread):
             paprika_recipe = RecipeObject()
             paprika_recipe.init_from_jsonobj(jsonobj=jsonobject)
 
-            if debug is True:
-                mpp_utils.dbgPrint("Pull UID: {}".format(recipe))
-                mpp_utils.dbgPrint(paprika_recipe)
+            mpp_utils.dbgPrint("Pull UID: {}".format(recipe))
+            mpp_utils.dbgPrint(paprika_recipe)
 
             # STORE INTO DATABASE
             if self.database.write_recipe(paprika_recipe=paprika_recipe) != Database.Error.ERR_SUCCESS:
-                if debug is True:
-                    mpp_utils.dbgPrint("Unable to store into database")
+                mpp_utils.dbgPrint("Unable to store into database")
                 unable_to_store += 1
             else:
                 successfully_stored += 1
                 
         if unable_to_store > successfully_stored:
-            if debug is True:
-                mpp_utils.dbgPrint("Failed when storing a majority of the recipes")
+            mpp_utils.dbgPrint("Failed when storing a majority of the recipes")
             return RecipeAgent.Error.ERR_REQUEST_FAIL
 
         # iterate through each UID and pull each recipe and all of its contents
@@ -373,6 +378,10 @@ class RecipeAgent(threading.Thread):
 
         # iterate through each recipe in the database
         for element in uid_list:
+            # check for application close
+            if self.app_surface.b_app_running == False:
+                return RecipeAgent.Error.ERR_APP_SHUTDOWN
+
             # uid is first and only element in tuple
             # based on behavior of "pull_recipe_list"
             uid = element[0]
@@ -415,21 +424,26 @@ class RecipeAgent(threading.Thread):
         self.app_surface.surface_lock.release()
 
         status_code = RecipeAgent.Error.ERR_SUCCESS
-        if self.command == RecipeAgent.Command.CMD_PULL_RECIPES:
-            status_code = self.__api_pull_recipes(loadbar=False, debug=False)
 
-        elif self.command == RecipeAgent.Command.CMD_PUSH_RECIPES:
-            status_code = self.__api_push_recipes()
+        try:
+            if self.command == RecipeAgent.Command.CMD_PULL_RECIPES:
+                status_code = self.__api_pull_recipes(debug=self.debug)
 
-        # error handling
-        if status_code is not RecipeAgent.Error.ERR_SUCCESS:
-            mpp_utils.dbgPrint("Unable to complete command.")
-            mpp_utils.dbgPrint("Error: {}".format(status_code))
-        
-        # set surface
-        self.app_surface.surface_lock.acquire()
-        self.app_surface.b_recipe_agent_running = False
-        self.app_surface.surface_lock.release()
+            elif self.command == RecipeAgent.Command.CMD_PUSH_RECIPES:
+                status_code = self.__api_push_recipes()
+
+            # error handling
+            if status_code is not RecipeAgent.Error.ERR_SUCCESS:
+                mpp_utils.dbgPrint("Unable to complete command.")
+                mpp_utils.dbgPrint("Error: {}".format(status_code))
+
+        except:
+            mpp_utils.dbgPrint("RecipeAgent: an exception has occurred")
+        finally:
+            # set surface
+            self.app_surface.surface_lock.acquire()
+            self.app_surface.b_recipe_agent_running = False
+            self.app_surface.surface_lock.release()
 
         # set the thread status
         self.status = status_code

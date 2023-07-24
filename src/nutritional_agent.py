@@ -13,7 +13,7 @@ from typing import Any
 # user defined
 import time
 import mpp_utils
-from app import AppSurface
+from data.surface import AppSurface
 from database import Database
 
 # for testing purposes
