@@ -2,6 +2,7 @@
 import random
 
 # objects
+import mpp_utils
 from data.surface import AppSurface
 from data.plan import MealPlan
 
@@ -23,6 +24,10 @@ def create_schedule(app_surface: AppSurface, recipe_agent: RecipeAgent, database
     uid_list = database.pull_recipe_list()
     uid_count = len(uid_list)
 
+    # if there are no recipes available just return the plan
+    if uid_count == 0:
+        return plan
+
     # iterate through each day
     for day in plan.meal_plan.keys():
         # iterate through each meal
@@ -37,6 +42,7 @@ def create_schedule(app_surface: AppSurface, recipe_agent: RecipeAgent, database
                 recipe = database.read_recipe(uid=uid)
                 # store in meal
                 day_elt.day_plan[meal] = recipe
+                generate_meal = False
 
 
     # print the mealplan
@@ -46,6 +52,15 @@ def create_schedule(app_surface: AppSurface, recipe_agent: RecipeAgent, database
 Update a single meal in schedule
 """
 def update_schedule_meal(app_surface: AppSurface, recipe_agent: RecipeAgent, database: Database, day_key, meal_key, recipe: RecipeObject) -> None:
+    # sanity check meal/day
+    if day_key not in app_surface.current_mealplan.meal_plan.keys():
+        mpp_utils.dbgPrint("requested day does not exist")
+        return
+
+    if meal_key not in app_surface.current_mealplan.meal_plan[day_key].day_plan.keys():
+        mpp_utils.dbgPrint("requested meal does not exist")
+        return
+
     # if there is no recipe, select a random one
     if recipe is None:
         uid_list = database.pull_recipe_list()

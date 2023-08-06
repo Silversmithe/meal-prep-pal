@@ -42,7 +42,7 @@ class AuthenticationObject (object):
 Object holds information about the Paprika3 HTTP Interface.
 The recipe agent can reference parts of the API from here.
 """
-class Paprika3 (object):
+class Paprika3Service (object):
 
     ## REFERENCE TO INSTANCE
     _instance=None
@@ -129,7 +129,7 @@ class RecipeAgent(threading.Thread):
         self.show_progress_status = False
 
         if RecipeAgent.PaprikaObj is None:
-            RecipeAgent.PaprikaObj = Paprika3()
+            RecipeAgent.PaprikaObj = Paprika3Service()
         # sanity checks
         if type(auth) is not AuthenticationObject:
             self.authentication = None

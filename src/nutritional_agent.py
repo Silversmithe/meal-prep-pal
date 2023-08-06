@@ -19,6 +19,17 @@ from database import Database
 # for testing purposes
 from recipe_agent import *
 
+"""
+Edmam
+
+Use Edmam Service to calculate nutritional value of the recipes
+Ref. https://www.edamam.com/
+"""
+class EdmamService (object):
+
+    def __init__(self) -> None:
+        pass
+
 
 """
 Nutritional Value

@@ -41,13 +41,14 @@ class Database (object):
         @retval False: failed to open the database
         """
         if self.connection_is_open is True:
-            print("connection is already open")
+            mpp_utils.dbgPrint("connection is already open")
             return Database.Error.ERR_CONNECTION_ALREADY_OPEN
         
         try:
             self.connection = sqlite3.connect(Database.DATABASE_PATH)
             self.cursor = self.connection.cursor()
         except:
+            mpp_utils.dbgPrint("failed to open connection")
             self.connection_is_open = False
             self.cursor = None
             return Database.Error.ERR_GENERIC
@@ -63,19 +64,19 @@ class Database (object):
         @retval False: close was not successful
         """
         if self.connection_is_open is False:
-            print("connection is already closed")
+            mpp_utils.dbgPrint("connection is already closed")
             return Database.Error.ERR_CONNECTION_NOT_OPEN
         
         if type(self.connection) is not sqlite3.Connection:
-            print("invalid database connection")
+            mpp_utils.dbgPrint("invalid database connection")
             return Database.Error.ERR_GENERIC 
         
         if self.cursor is None:
-            print("invalid database cursor (Nones)")
+            mpp_utils.dbgPrint("invalid database cursor (Nones)")
             return Database.Error.ERR_GENERIC
 
         if type(self.cursor) is not sqlite3.Cursor:
-            print("invalid database cursor")
+            mpp_utils.dbgPrint("invalid database cursor")
             return Database.Error.ERR_GENERIC
         
         try:
@@ -83,7 +84,7 @@ class Database (object):
             self.connection.close()
             self.connection_is_open = False
         except:
-            print("failed to close the database connction")
+            mpp_utils.dbgPrint("failed to close the database connction")
             return Database.Error.ERR_OPERATION_FAILED
 
         return Database.Error.ERR_SUCCESS
@@ -94,6 +95,7 @@ class Database (object):
         @retval list: list of uids of all of the recipes
         """
         uid_list = None
+        mpp_utils.dbgPrint("pulling recipe list")
 
         try:
             # get a cursor

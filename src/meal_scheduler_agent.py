@@ -7,7 +7,7 @@ from typing import Any
 
 # App packages
 import mpp_utils
-from app import AppSurface
+from data.surface import AppSurface
 from data.recipe import RecipeObject
 from data.surface import AppSurface
 from database import Database
